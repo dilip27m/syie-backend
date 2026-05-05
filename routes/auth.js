@@ -1,240 +1,33 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
 const auth = require('../middleware/auth');
-const { body, validationResult } = require('express-validator');
+const authController = require('../controllers/authController');
+const {
+  validate,
+  registerValidators,
+  loginValidators,
+  placementStatusValidators,
+  socialLinksValidators,
+} = require('../middleware/validators');
 
-router.get('/', auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id).select('-password');
-    res.json(user);
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
-});
+// @route   GET /api/auth
+// @desc    Get authenticated user
+router.get('/', auth, authController.getMe);
 
-// Get user by roll number (for profile viewing)
-router.get('/user/:roll', async (req, res) => {
-  try {
-    const user = await User.findOne({ rollNumber: req.params.roll }).select('-password');
-    if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
-    res.json(user);
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
-});
+// @route   GET /api/auth/user/:roll
+// @desc    Get user by roll number (profile viewing)
+router.get('/user/:roll', authController.getUserByRoll);
 
+// @route   POST /api/auth/register
+router.post('/register', registerValidators, validate, authController.register);
 
-router.post('/register', [
-  body('rollNumber')
-    .trim()
-    .notEmpty().withMessage('Roll number is required')
-    .customSanitizer(value => value.toLowerCase()), // Auto convert to lowercase to be safe
-  body('fullName')
-    .trim()
-    .notEmpty().withMessage('Full name is required')
-    .isLength({ min: 2, max: 100 }).withMessage('Name must be between 2 and 100 characters')
-    .matches(/^[a-zA-Z\s]+$/).withMessage('Name can only contain letters and spaces'),
-  body('password')
-    .notEmpty().withMessage('Password is required')
-    .isLength({ min: 6 }).withMessage('Password must be at least 6 characters long')
-], async (req, res) => {
-  // Check for validation errors
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ msg: errors.array()[0].msg });
-  }
+// @route   POST /api/auth/login
+router.post('/login', loginValidators, validate, authController.login);
 
-  const { rollNumber, fullName, password } = req.body;
+// @route   PUT /api/auth/placement-status
+router.put('/placement-status', auth, placementStatusValidators, validate, authController.updatePlacementStatus);
 
-  try {
-    let user = await User.findOne({ rollNumber });
-    if (user) {
-      return res.status(400).json({ msg: 'User already exists' });
-    }
-
-
-    user = new User({
-      rollNumber,
-      fullName,
-      password
-    });
-
-
-    const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(password, salt);
-
-    await user.save();
-
-    const payload = {
-      user: {
-        rollNumber: user.rollNumber,
-        id: user.id
-      }
-    };
-
-    jwt.sign(
-      payload,
-      process.env.JWT_SECRET,
-      { expiresIn: '5d' },
-      (err, token) => {
-        if (err) throw err;
-        res.json({ token, id: user.id, rollNumber: user.rollNumber, fullName: user.fullName });
-      }
-    );
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
-});
-
-
-router.post('/login', [
-  body('rollNumber')
-    .trim()
-    .notEmpty().withMessage('Roll number is required')
-    .notEmpty().withMessage('Roll number is required')
-    .customSanitizer(value => value.toLowerCase()),
-  body('password')
-    .notEmpty().withMessage('Password is required')
-], async (req, res) => {
-  // Check for validation errors
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ msg: errors.array()[0].msg });
-  }
-
-  const { rollNumber, password } = req.body;
-
-  try {
-    let user = await User.findOne({ rollNumber });
-    if (!user) {
-      return res.status(400).json({ msg: 'Invalid Credentials' });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ msg: 'Invalid Credentials' });
-    }
-
-    const payload = {
-      user: {
-        rollNumber: user.rollNumber,
-        id: user.id
-      }
-    };
-
-    jwt.sign(
-      payload,
-      process.env.JWT_SECRET,
-      { expiresIn: '5d' },
-      (err, token) => {
-        if (err) throw err;
-        res.json({ token, id: user.id, rollNumber: user.rollNumber, fullName: user.fullName });
-      }
-    );
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
-});
-
-// Update Placement Status
-router.put('/placement-status', auth, [
-  body('isPlaced').isBoolean().withMessage('Placement status must be true or false'),
-  body('placedCompany').optional().trim(),
-  body('package').optional().trim(),
-], async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ msg: errors.array()[0].msg });
-  }
-
-  try {
-    const { isPlaced, placedCompany, package: pkg } = req.body;
-
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
-
-    user.isPlaced = isPlaced;
-    if (isPlaced) {
-      user.placedCompany = placedCompany || '';
-      user.package = pkg || '';
-      user.placedDate = new Date();
-    } else {
-      user.placedCompany = '';
-      user.package = '';
-      user.placedDate = null;
-    }
-
-    await user.save();
-
-    res.json({
-      isPlaced: user.isPlaced,
-      placedCompany: user.placedCompany,
-      package: user.package,
-      placedDate: user.placedDate
-    });
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
-});
-
-// Update Social Links
-router.put('/social-links', auth, [
-  body('github').trim().optional({ checkFalsy: true }).isURL().withMessage('Invalid GitHub URL'),
-  body('linkedin').trim().optional({ checkFalsy: true }).isURL().withMessage('Invalid LinkedIn URL'),
-  body('leetcode').trim().optional({ checkFalsy: true }).isURL().withMessage('Invalid LeetCode URL'),
-  body('codeforces').trim().optional({ checkFalsy: true }).isURL().withMessage('Invalid Codeforces URL'),
-  body('email').trim().optional({ checkFalsy: true }).isEmail().withMessage('Invalid email address'),
-  body('portfolio').trim().optional({ checkFalsy: true }).isURL().withMessage('Invalid Portfolio URL')
-], async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ msg: errors.array()[0].msg });
-  }
-
-  try {
-    const { github, linkedin, leetcode, codeforces, email, portfolio } = req.body;
-
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
-
-    // Update social links
-    // Ensure socialLinks object exists
-    if (!user.socialLinks) {
-      user.socialLinks = {};
-    }
-
-    // Explicitly set fields to avoid Issues with partial updates or undefined defaults
-    if (github !== undefined) user.socialLinks.github = github;
-    if (linkedin !== undefined) user.socialLinks.linkedin = linkedin;
-    if (leetcode !== undefined) user.socialLinks.leetcode = leetcode;
-    if (codeforces !== undefined) user.socialLinks.codeforces = codeforces;
-    if (email !== undefined) user.socialLinks.email = email;
-    if (portfolio !== undefined) user.socialLinks.portfolio = portfolio;
-
-    await user.save();
-
-    res.json({
-      socialLinks: user.socialLinks
-    });
-  } catch (err) {
-    console.error("Link Update Error:", err.message);
-    // Send specific error message for debugging (in production, we might hide this, but helpful here)
-    res.status(500).json({ msg: `Server Error: ${err.message}` });
-  }
-});
+// @route   PUT /api/auth/social-links
+router.put('/social-links', auth, socialLinksValidators, validate, authController.updateSocialLinks);
 
 module.exports = router;
