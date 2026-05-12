@@ -29,4 +29,23 @@ const searchUser = asyncHandler(async (req, res) => {
   res.json(user);
 });
 
-module.exports = { searchUser };
+/**
+ * @route   GET /api/users/suggest?q=...
+ * @desc    Live autocomplete: search users by name or roll number prefix
+ * @access  Public
+ */
+const suggestUsers = asyncHandler(async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q || q.length < 2) return res.json([]);
+
+  const regex = new RegExp(q, 'i');
+  const users = await User.find({
+    $or: [{ fullName: regex }, { rollNumber: regex }],
+  })
+    .select('fullName rollNumber isPlaced placedCompany')
+    .limit(8);
+
+  res.json(users);
+});
+
+module.exports = { searchUser, suggestUsers };

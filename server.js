@@ -53,6 +53,7 @@ app.use('/api/auth', authLimiter, require('./routes/auth'));
 app.use('/api/posts', require('./routes/posts'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/stats', require('./routes/stats'));
+app.use('/api/ai', require('./routes/ai'));
 
 // Health Check Route
 app.get('/health', (req, res) => {
